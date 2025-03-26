@@ -1,0 +1,17 @@
+# Ignore virtual environment directories
+venv/
+env/
+
+# Ignore PNG images
+*.png
+
+# Ignore everything else...
+*
+# ...but not directories, so Git can traverse them
+!*/
+# ...and not .py files
+!*.py
+# ...and not the requirements.txt file
+!requirements.txt
+# ...and not the .gitignore file itself
+!.gitignore
