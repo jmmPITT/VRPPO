@@ -177,7 +177,7 @@ def test_environment(args):
         device=device
     )
 
-    agent.load("./ppo_model.pt")
+    # agent.load("./ppo_model.pt")
     
     # Get state and action shapes
     state_shape = env.get_state_shape()
@@ -240,7 +240,7 @@ def test_environment(args):
             with torch.no_grad():
 
                 _, C1, M1, H1, N1, C2, M2, H2, N2 = agent.process_with_vit(state, C1, M1, H1, N1, C2, M2, H2, N2)
-                cls = H2[0, :]
+                # cls = H2[0, :]
                 s = H2[1:, :]
             # print(f"State shape after processing: {state.shape}")
             actions, log_probs = agent.get_action(s)
@@ -255,7 +255,7 @@ def test_environment(args):
 
             if done:
                 with torch.no_grad():
-                    c = agent.classifier.classify(cls)
+                    c = agent.classifier.classify(H2)
                     # print('c', c)
                     # print('label', label)
                     predicted_label = torch.argmax(c)
@@ -271,24 +271,12 @@ def test_environment(args):
             # Store the state for visualization
             episode_states.append(next_state.detach())
             
-            # Print step information
-            # print(f"  Step {step+1}/{args.sequence_length}:")
-            # print(f"    Label: {info['label']}")
-            # print(f"    State shape: {next_state.shape}")
-            # print(f"    Reward: {reward}")
-            # print(f"    Done: {done}")
             
             # Update state for next iteration
             state = next_state
             # print(f"state shape in main_two: {state.shape}")
             step += 1
         
-        # print('episode_states_list', len(episode_states_list))
-        # print('episode_next_states_list', len(episode_next_states_list))
-        # print('episode_actions_list', len(episode_actions_list))
-        # print('episode_log_probs_list', len(episode_log_probs_list))
-        # print('episode_rewards_list', len(episode_rewards_list))
-        # print('episode_dones_list', len(episode_dones_list))
         # Convert episode lists to tensors with proper shapes
         # Each list element is a tensor of shape [1200, 16]
         states_tensor = torch.stack(episode_states_list, dim=1)
@@ -336,13 +324,14 @@ def test_environment(args):
         predicted_losses.append(metrics['predicted_loss'])
 
         # Print progress
-        if episode % 2000 == 0:
+        if episode % 500 == 0:
             print(f"Iteration { episode+1  }/{args.num_episodes}")
-            print(f"  Actor Loss: {sum(actor_losses[-1000:])/1000:.4f}")
-            print(f"  Critic Loss: {sum(critic_losses[-1000:])/1000:.4f}")
-            print(f"  Entropy: {sum(entropies[-1000:])/1000:.4f}")
-            print(f"  Predicted Loss: {sum(predicted_losses[-1000:])/1000:.4f}")
-            print(f"  Rewards: {sum(rewards_list[-1000:])/1000:.4f}")
+            print(f"  Actor Loss: {sum(actor_losses[-500:])/500:.4f}")
+            print(f"  Critic Loss: {sum(critic_losses[-500:])/500:.4f}")
+            print(f"  Entropy: {sum(entropies[-500:])/500:.4f}")
+            print(f"  Predicted Loss: {sum(predicted_losses[-500:])/500:.4f}")
+            print(f"  Rewards: {sum(rewards_list[-500:])/500:.4f}")
+
             # Save the trained agent
             agent.save("./ppo_model.pt")
             print("Model saved to ./ppo_model.pt")

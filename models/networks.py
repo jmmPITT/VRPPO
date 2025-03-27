@@ -229,13 +229,45 @@ class ActorNetwork(nn.Module):
 
 
 class CriticNetwork(nn.Module):
-    def __init__(self, input_dim=512, hidden_dim=256, output_dim=1):
+    def __init__(self, input_dim=512, hidden_dim=256, output_dim=1, n_patches=12*19*19):
         super(CriticNetwork, self).__init__()
+        # self.n_patches = n_patches
+        self.input_dim = input_dim
+        self.total_grid_points = n_patches
+        # Encoder
+        self.TE1 = nn.TransformerEncoderLayer(
+            d_model=512,
+            nhead=4,
+            dim_feedforward=1024,
+            dropout=0.01,
+            activation='gelu'  # Activation function ('relu' or 'gelu')
+        )
+        self.TE2 = nn.TransformerEncoderLayer(
+            d_model=512,
+            nhead=4,
+            dim_feedforward=1024,
+            dropout=0.01,
+            activation='gelu'  # Activation function ('relu' or 'gelu')
+        )
+        self.TE3 = nn.TransformerEncoderLayer(
+            d_model=512,
+            nhead=4,
+            dim_feedforward=1024,
+            dropout=0.01,
+            activation='gelu'  # Activation function ('relu' or 'gelu')
+        )
+
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.fc3 = nn.Linear(hidden_dim, output_dim)
         
-    def forward(self, x):
+    def forward(self, H):
+        # print(H.shape)
+        H = H.view(-1, self.total_grid_points+1, self.input_dim)
+        H = self.TE1(H) # [batch_size, total_grid_points+1, input_dim]
+        H = self.TE2(H)
+        H = self.TE3(H)
+        x = H[:, 0, :].view(-1, self.input_dim)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         value = self.fc3(x)
@@ -317,6 +349,13 @@ class ViTClassifier(nn.Module):
         )
         
         # Output projection
+        self.TEC = nn.TransformerEncoderLayer(
+            d_model=self.dff,
+            nhead=4,
+            dim_feedforward=1024,
+            dropout=0.01,
+            activation='gelu'  # Activation function ('relu' or 'gelu')
+        )
         self.fc1_classifier = nn.Linear(self.dff, self.dff)
         self.fc2_classifier = nn.Linear(self.dff, self.dff)
         self.fc3_classifier = nn.Linear(self.dff, num_classes)
@@ -381,7 +420,7 @@ class ViTClassifier(nn.Module):
         
         return Z2.view(-1, self.input_dim), C1.view(-1, self.dff), M1.view(-1, self.dff), H1.view(-1, self.dff), N1.view(-1, self.dff), C2.view(-1, self.dff), M2.view(-1, self.dff), H2.view(-1, self.dff), N2.view(-1, self.dff)
     
-    def classify(self, h_cls):
+    def classify(self, H):
         """
         Classify from transformer embeddings using the CLS token.
         
@@ -395,7 +434,10 @@ class ViTClassifier(nn.Module):
             logits: Classification logits [batch_size, num_classes]
         """
         # Use the class token for classification
-        cls_token = h_cls
+        # print(H.shape)
+        H = H.view(-1, self.total_grid_points+1, self.dff)
+        H = self.TEC(H)
+        cls_token = H[:, 0, :].view(-1, self.dff)
         
         # Classification
         cls_token = F.elu(self.fc1_classifier(cls_token))

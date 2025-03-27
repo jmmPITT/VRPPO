@@ -22,7 +22,7 @@ class PPOAgent:
         self.total_grid_points = 12*10*10
         
         self.actor = ActorNetwork(input_dim=dff, hidden_dim=hidden_dim, action_dim=action_dim).to(device)
-        self.critic = CriticNetwork(input_dim=dff, hidden_dim=hidden_dim).to(device)
+        self.critic = CriticNetwork(input_dim=dff, hidden_dim=hidden_dim, n_patches=self.total_grid_points).to(device)
 
         self.classifier = ViTClassifier(input_dim=input_dim, hidden_dim=hidden_dim, num_heads=2, num_layers=1,
                  mlp_dim=128, num_patches=12, grid_height=10, grid_width=10, 
@@ -107,8 +107,7 @@ class PPOAgent:
             gae = delta + gamma * tau * (1 - dones[t]) * gae
             advantages.insert(0, gae)
             
-        return advantages
-    
+            
     def learn(self, states, actions, old_log_probs, rewards, next_states, dones, epochs=1, patch_size=None, label=None):
         """
         PPO update that loops over the 3 timesteps to accumulate losses,
@@ -128,10 +127,13 @@ class PPOAgent:
         
         # Process states through the ViT encoder for each timestep.
         # Note: processed_states holds grid-level features, processed_states_cls holds the CLS token per timestep.
-        processed_states = torch.zeros((self.total_grid_points, seq_len, self.dff), device=self.device)
-        processed_next_states = torch.zeros((self.total_grid_points, seq_len, self.dff), device=self.device)
+        processed_states_actor = torch.zeros((seq_len, self.total_grid_points, self.dff), device=self.device)
+        processed_states_critic = torch.zeros((seq_len, self.total_grid_points+1, self.dff), device=self.device)
+        processed_next_states_actor = torch.zeros((seq_len, self.total_grid_points, self.dff), device=self.device)
+        processed_next_states_critic = torch.zeros((seq_len, self.total_grid_points+1, self.dff), device=self.device)
+        
         processed_states_cls = torch.zeros((seq_len, self.dff), device=self.device)
-        processed_next_states_cls = torch.zeros((seq_len, self.dff), device=self.device)
+        # processed_next_states_cls = torch.zeros((seq_len, self.dff), device=self.device)
 
         # Initialize ViT memory tokens (or any required buffers)
         C1 = torch.zeros(self.total_grid_points+1, self.dff).to(self.device)
@@ -150,16 +152,18 @@ class PPOAgent:
             # Process current states (gradients enabled so that the ViT is trainable)
             _, C1, M1, H1, N1, C2, M2, H2, N2 = self.process_with_vit(current_states, C1, M1, H1, N1, C2, M2, H2, N2)
             processed_states_cls[i, :] = H2[0, :]
-            processed_states[:, i, :] = H2[1:, :]
+            processed_states_actor[i, :, :] = H2[1:, :]
+            processed_states_critic[i, :, :] = H2
             
             # Process next states (no gradients)
             with torch.no_grad():
                 _, _, _, _, _, _, _, H2_next, _ = self.process_with_vit(current_next_states, C1, M1, H1, N1, C2, M2, H2, N2)
-                processed_next_states_cls[i, :] = H2_next[0, :]
-                processed_next_states[:, i, :] = H2_next[1:, :]
+                # processed_next_states_cls[i, :] = H2_next[0, :]
+                processed_next_states_actor[i, :, :] = H2_next[1:, :]
+                processed_next_states_critic[i, :, :] = H2_next
 
         # Use the CLS token of the last timestep for classification loss
-        c = self.classifier.classify(processed_states_cls[-1, :])
+        c = self.classifier.classify(H2)
         if c.dim() == 1:
             c = c.unsqueeze(0)
         # Create a batch of size 1 for the label (remains unchanged)
@@ -168,8 +172,8 @@ class PPOAgent:
         predicted_loss = F.cross_entropy(c, label)
         
         # # Get value estimates from the critic (reshape to [1, seq_len])
-        values = self.critic(processed_states_cls.reshape(-1, self.dff)).view(1, seq_len)
-        next_values = self.critic(processed_next_states_cls.reshape(-1, self.dff)).view(1, seq_len)
+        values = self.critic(processed_states_critic.detach().view(-1, self.total_grid_points+1, self.dff)).view(-1, seq_len)
+        next_values = self.critic(processed_next_states_critic.detach().view(-1, self.total_grid_points+1, self.dff)).view(-1, seq_len)
         
         # Compute advantages using GAE over the timesteps
         advantages = torch.zeros_like(rewards_tensor, device=self.device)
@@ -195,7 +199,7 @@ class PPOAgent:
         # Loop through each timestep, compute and accumulate losses.
         for t in range(seq_len):
             # Evaluate the actor on the grid-level features for timestep t.
-            new_log_probs_t, entropy_t = self.actor.evaluate_actions(processed_states[:, t, :], actions_tensor[:, t])
+            new_log_probs_t, entropy_t = self.actor.evaluate_actions(processed_states_actor[t, :, :], actions_tensor[:, t])
             ratio_t = torch.exp(new_log_probs_t - old_log_probs_tensor[:, t])
             # print('ratio_t', ratio_t.shape)
             # print('new_log_probs_t', new_log_probs_t)
@@ -211,8 +215,8 @@ class PPOAgent:
             
 
             # Critic loss is computed on the CLS token features for timestep t.
-            value_t = self.critic(processed_states_cls[t, :].unsqueeze(0))
-            critic_loss_t = F.mse_loss(value_t.view(-1), returns[:, t].view(-1))
+            value_t = self.critic(processed_states_critic[t, :, :].detach()).view(-1)
+            critic_loss_t = F.mse_loss(value_t, returns[:, t].view(-1))
             total_critic_loss += critic_loss_t
             
             # Accumulate the entropy loss.
